@@ -1,0 +1,33 @@
+{
+  "name": "davidtech-updater",
+  "version": "0.1.0",
+  "description": "Shared auto-update tooling for DavidTech apps. Generates per-framework manifests and uploads installers to the shared Cloudflare R2 bucket behind updates.davidtechllc.com.",
+  "type": "module",
+  "bin": {
+    "davidtech-updater": "bin/davidtech-updater.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "help": "node bin/davidtech-updater.js --help"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mark2messmore/davidtech-updater.git"
+  },
+  "license": "MIT",
+  "peerDependencies": {
+    "wrangler": ">=4"
+  },
+  "peerDependenciesMeta": {
+    "wrangler": {
+      "optional": true
+    }
+  }
+}
