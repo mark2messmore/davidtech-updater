@@ -82,19 +82,34 @@ export function tagToVersion(tag) {
 // Ask GitHub for the highest v-prefixed semver tag pushed to `repo`. Used by
 // the polling workflow to decide "does this app have a release newer than
 // what's on R2?" without the app needing to create a GitHub Release.
+//
+// Uses `git ls-remote --tags` rather than `gh api`:
+//   gh api inside GitHub Actions uses the repo's GITHUB_TOKEN, which is scoped
+//   to the current repo only — it returns 404 for a different public repo's
+//   tags endpoint. git ls-remote over HTTPS is anonymous for public repos and
+//   needs no auth. (For private target repos, swap in an HTTPS URL with a
+//   token; out of scope here — documented in README.)
 export function latestSemverTag(repo) {
-  assertGhAvailable();
   const out = execSync(
-    `gh api repos/${repo}/tags --paginate --jq ".[].name"`,
+    `git ls-remote --tags https://github.com/${repo}.git`,
     { encoding: 'utf8' }
   );
+  // Each line is "<sha>\trefs/tags/<tagname>". Annotated tags also appear as
+  // "<sha>\trefs/tags/<tagname>^{}" — the "peeled" commit. We strip ^{} so
+  // both forms collapse to a single tag name.
   const tags = out
     .split('\n')
-    .map((s) => s.trim())
-    .filter((s) => /^v\d+\.\d+\.\d+/.test(s));
-  if (tags.length === 0) return null;
-  tags.sort(compareSemverTag);
-  return tags[tags.length - 1];
+    .map((line) => {
+      const m = line.match(/refs\/tags\/(v\d+\.\d+\.\d+[^\s]*?)(?:\^\{\})?$/);
+      return m ? m[1] : null;
+    })
+    .filter((t) => t !== null);
+
+  // De-dupe peeled+unpeeled pairs and sort semver.
+  const unique = [...new Set(tags)];
+  if (unique.length === 0) return null;
+  unique.sort(compareSemverTag);
+  return unique[unique.length - 1];
 }
 
 // Compare "v1.2.3" style tags numerically. Returns -1/0/1 like a sort comparator.
