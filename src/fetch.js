@@ -78,3 +78,56 @@ export function fetchReleaseAssets({ repo, tag, framework }) {
 export function tagToVersion(tag) {
   return tag.replace(/^v/, '');
 }
+
+// Ask GitHub for the highest v-prefixed semver tag pushed to `repo`. Used by
+// the polling workflow to decide "does this app have a release newer than
+// what's on R2?" without the app needing to create a GitHub Release.
+export function latestSemverTag(repo) {
+  assertGhAvailable();
+  const out = execSync(
+    `gh api repos/${repo}/tags --paginate --jq ".[].name"`,
+    { encoding: 'utf8' }
+  );
+  const tags = out
+    .split('\n')
+    .map((s) => s.trim())
+    .filter((s) => /^v\d+\.\d+\.\d+/.test(s));
+  if (tags.length === 0) return null;
+  tags.sort(compareSemverTag);
+  return tags[tags.length - 1];
+}
+
+// Compare "v1.2.3" style tags numerically. Returns -1/0/1 like a sort comparator.
+// Doesn't handle pre-release suffixes (-beta.1) — DavidTech apps use plain SemVer.
+export function compareSemverTag(a, b) {
+  const parse = (t) => t.replace(/^v/, '').split('.').map((n) => parseInt(n, 10) || 0);
+  const [a1, a2, a3] = parse(a);
+  const [b1, b2, b3] = parse(b);
+  if (a1 !== b1) return a1 - b1;
+  if (a2 !== b2) return a2 - b2;
+  return a3 - b3;
+}
+
+// Read the version currently published at R2 for (slug, app, framework).
+// Returns null when nothing is published (Worker responds 204 for missing
+// latest.json, 404 for missing latest.yml). Parses manifest inline — lightweight
+// enough that pulling in a JSON-or-YAML lib isn't worth it for two formats.
+export async function publishedVersion({ slug, app, framework }) {
+  const { UPDATE_DOMAIN } = await import('./config.js');
+  const filename = framework === 'tauri' ? 'latest.json' : 'latest.yml';
+  const url = `https://${UPDATE_DOMAIN}/${slug}/${app}/${filename}`;
+
+  const res = await fetch(url);
+  if (res.status === 204 || res.status === 404) return null;
+  if (!res.ok) {
+    throw new Error(`Unexpected ${res.status} fetching ${url}`);
+  }
+  const body = await res.text();
+
+  if (framework === 'tauri') {
+    return JSON.parse(body).version ?? null;
+  }
+  // Electron latest.yml — single-line "version: 1.2.3" at top of YAML
+  const m = body.match(/^version:\s*['"]?([^'"\s]+)['"]?$/m);
+  return m ? m[1] : null;
+}

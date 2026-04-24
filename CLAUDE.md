@@ -11,8 +11,9 @@ Project-management state (current focus, next actions, blockers, log) lives in `
 ```bash
 npm run help                                                        # CLI usage
 npm run register -- <name> --framework=<fw> [--repo=<owner/name>]   # Add an app to apps.json
-npm run publish  -- <name> [tag] [--from=<path>] [--dry-run]        # Ship a release to R2
+npm run publish  -- <name> [tag] [--from=<path>] [--dry-run]        # Ship a release to R2 manually
 npm run apps                                                        # List registered apps
+node bin/davidtech-updater.js check-releases [--json]               # Compare tags vs R2 (used by CI)
 node bin/davidtech-updater.js <cmd> <args>                          # Equivalent, no -- needed
 ```
 
@@ -56,14 +57,26 @@ All three share one invariant: the `slug` / `app` / `filename` regexes in `worke
 
 Adapters **never touch `cwd`** — that was a v0.1.0 constraint. Everything they need comes in via the ctx object.
 
-### Option A vs Option B (publish modes)
+### The primary path — scheduled, central build
 
-Two ways to get to a signed, published release:
+`.github/workflows/release.yml` in this repo is the production release pipeline. It runs every 15 minutes + on manual dispatch and:
 
-- **Option A — local build, local publish** (current default and what the README recommends): `tauri build` happens on the maintainer's laptop with `TAURI_SIGNING_PRIVATE_KEY` read from `~/.tauri/davidtech_updater.key`. `npm run publish -- <app> --from=<path>` ships from the laptop. Zero GitHub secrets, zero per-app CI changes.
-- **Option B — CI build, local or CI publish**: `tauri-action` in the target app's CI builds + signs (with the signing key as a repo secret) + attaches to a GH Release. Then `npm run publish -- <app> <tag>` fetches those assets. Target app still needs the signing-key secret, but the Cloudflare token stays only here.
+1. Runs `check-releases --json` to emit a build matrix of apps whose latest git tag is ahead of what's published at R2.
+2. For each item in the matrix: clones the target app at the tag, builds with `TAURI_SIGNING_PRIVATE_KEY` + `CLOUDFLARE_API_TOKEN` from **this** repo's secrets, then `publish`es.
 
-Option A was picked as the starting point. Don't design for Option B until the user asks — both paths already work in the code.
+**Target app repos hold no release plumbing.** No workflows, no signing-key secrets, no Cloudflare tokens. `git tag v1.2.0 && git push --tags` is the whole release action.
+
+Constraint: the target app's version in `package.json` / `Cargo.toml` / `tauri.conf.json` must match the tag. Tauri's bundler uses the conf version for filenames and the publish step uses the conf version for the R2 key — if the tag says v1.2.0 but the conf still says 1.1.0, nothing new lands at R2.
+
+### Manual publish (fallback / emergency / first bring-up)
+
+`npm run publish -- <app> [tag] [--from=<path>] [--dry-run]` is kept working alongside the automated pipeline. Use cases:
+
+- **`--from=<path>`**: ship an un-tagged local build (useful during initial wiring of a new app)
+- **`--from=<path> --dry-run`**: verify a new app's wiring without uploading anything
+- **`<tag>`**: re-ship a specific historical tag (same wrangler credentials as the workflow uses, just from the maintainer laptop)
+
+Both paths call the same adapters and produce byte-identical R2 uploads.
 
 ### Framework adapters
 

@@ -1,6 +1,7 @@
 import { slugCommand } from './commands/slug.js';
 import { registerCommand } from './commands/register.js';
 import { publishCommand } from './commands/publish.js';
+import { checkReleasesCommand } from './commands/check-releases.js';
 import { listApps } from './registry.js';
 
 const USAGE = `
@@ -15,6 +16,8 @@ Commands:
                                     Register a new app in apps.json
   publish <name> [tag] [--from=<path>] [--dry-run]
                                     Publish an app's release to R2
+  check-releases [--json]           Compare registered apps' latest tags against R2;
+                                    list apps that need publishing (used by CI cron)
   apps                              List registered apps
   slug                              Generate a 12-char slug (not usually needed —
                                     'register' does this automatically)
@@ -42,6 +45,8 @@ export async function main(argv) {
       return registerCommand(rest);
     case 'publish':
       return publishCommand(rest);
+    case 'check-releases':
+      return checkReleasesCommand(rest);
     case 'apps':
       return listCommand();
     case '--help':

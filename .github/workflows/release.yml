@@ -1,0 +1,130 @@
+name: Release
+
+# Centralized auto-release: every 15 minutes this workflow looks at every app
+# registered in apps.json, compares its latest v-prefixed git tag to what's
+# currently published at updates.davidtechllc.com, and builds + publishes any
+# app that has a newer tag. Also dispatchable manually for immediate runs.
+#
+# All secrets (TAURI_SIGNING_PRIVATE_KEY, CLOUDFLARE_API_TOKEN) live in THIS
+# repo's Settings → Secrets. Target app repos carry NO release plumbing —
+# bump versions, tag, push, and wait for the next cron tick.
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+# Only one release pipeline runs at a time across the whole org. Prevents two
+# cron ticks racing on the same just-pushed tag, or a manual dispatch fighting
+# a cron that's already building.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      count: ${{ steps.plan.outputs.count }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Compute release plan
+        id: plan
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          echo "Checking which apps have new tags..."
+          node bin/davidtech-updater.js check-releases
+          echo
+          MATRIX=$(node bin/davidtech-updater.js check-releases --json)
+          echo "matrix=${MATRIX}" >> $GITHUB_OUTPUT
+          COUNT=$(echo "${MATRIX}" | node -e 'process.stdout.write(String(JSON.parse(require("fs").readFileSync(0,"utf8")).length))')
+          echo "count=${COUNT}" >> $GITHUB_OUTPUT
+          echo "Apps needing publish: ${COUNT}"
+
+  release:
+    needs: plan
+    if: needs.plan.outputs.count != '0'
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.matrix) }}
+
+    steps:
+      - name: Check out davidtech-updater
+        uses: actions/checkout@v4
+        with:
+          path: davidtech-updater
+
+      - name: Check out target app (${{ matrix.app }} @ ${{ matrix.tag }})
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ matrix.repo }}
+          ref: ${{ matrix.tag }}
+          path: app
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          # npm cache scoped to the target app's lockfile keeps subsequent runs fast
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+        if: matrix.framework == 'tauri'
+
+      - name: Cache Rust target dir
+        if: matrix.framework == 'tauri'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            app/src-tauri/target
+          # Key by tag so each release gets fresh build output but dependency
+          # crates are reused across builds of the same app.
+          key: tauri-${{ matrix.app }}-${{ matrix.tag }}-${{ hashFiles('app/src-tauri/Cargo.lock') }}
+          restore-keys: |
+            tauri-${{ matrix.app }}-
+
+      - name: Install app deps
+        working-directory: app
+        run: npm ci
+
+      - name: Build Tauri bundle
+        if: matrix.framework == 'tauri'
+        working-directory: app
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npm run tauri build
+
+      - name: Build Electron bundle
+        if: matrix.framework == 'electron'
+        working-directory: app
+        run: npm run build:install
+
+      - name: Publish to R2
+        working-directory: davidtech-updater
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          node bin/davidtech-updater.js publish ${{ matrix.app }} --from="${GITHUB_WORKSPACE}/app"
+
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          echo "### ${{ matrix.app }} @ ${{ matrix.tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "- framework: ${{ matrix.framework }}" >> $GITHUB_STEP_SUMMARY
+          echo "- status: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+          echo "- endpoint: https://updates.davidtechllc.com/$(node -e 'console.log(JSON.parse(require(\"fs\").readFileSync(\"apps.json\",\"utf8\")).apps[\"${{ matrix.app }}\"].slug)')/${{ matrix.app }}/" >> $GITHUB_STEP_SUMMARY

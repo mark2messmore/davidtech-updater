@@ -1,4 +1,11 @@
 {
   "schemaVersion": 1,
-  "apps": {}
+  "apps": {
+    "beam-profiler": {
+      "slug": "0ex2s23yt30r",
+      "framework": "tauri",
+      "repo": "mark2messmore/dukane-beam-profiler",
+      "registeredAt": "2026-04-24T20:19:23.816Z"
+    }
+  }
 }

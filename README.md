@@ -1,14 +1,23 @@
 # davidtech-updater
 
-Auto-update **control plane** for DavidTech apps. One repo. One registry of every app. One place you run releases from.
+Auto-update **control plane** for DavidTech apps. One repo. One registry of every app. One place that holds the signing key and the Cloudflare token.
+
+## The shipping workflow
 
 ```bash
-npm run register -- beam-profiler --framework=tauri --repo=mark2messmore/dukane-beam-profiler
-# wire the in-app bits per the printed instructions, build once, then:
-npm run publish -- beam-profiler
+# In the app repo (e.g. dukane-beam-profiler):
+# bump version in package.json / Cargo.toml / tauri.conf.json
+git commit -am "v1.2.0"
+git tag v1.2.0
+git push --tags
+
+# Wait up to 15 minutes. A scheduled workflow in this repo builds + signs +
+# publishes automatically. Next time any installed app checks, it sees the new version.
 ```
 
-That's the whole workflow. Target apps themselves hold only the absolute minimum — updater plugin + pubkey + endpoint — and **do not** need `davidtech-updater` installed, CI edits, or repo secrets.
+That's the entire loop. Target apps themselves hold only the in-app wiring (updater plugin + pubkey + endpoint) and **do not** carry signing keys, Cloudflare tokens, release workflows, or `davidtech-updater` as a dependency.
+
+One-time onboarding per app is still `npm run register -- <name>` from this repo — see [Registering a new app](#registering-a-new-app).
 
 ---
 
@@ -45,21 +54,35 @@ Commit it. No secrets in here — the slug is visible inside every installed app
 
 ---
 
-## Prerequisites (one-time, maintainer laptop)
+## Prerequisites
+
+### One-time, on GitHub (enables automated releases)
+
+In `mark2messmore/davidtech-updater` → Settings → Secrets and variables → Actions, add:
+
+| Secret | Value |
+|---|---|
+| `TAURI_SIGNING_PRIVATE_KEY` | Contents of `~/.tauri/davidtech_updater.key` — paste the whole file |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | The password you set when generating the key (omit if you hit Enter twice for no password) |
+| `CLOUDFLARE_API_TOKEN` | R2 write token scoped to `davidtech-app-updates` |
+
+Without these, the scheduled release workflow will fail visibly on the first run after a tagged push — you don't have to set them to merge this repo, but nothing ships until they're set.
+
+### One-time, on the maintainer laptop (for manual publish / local admin)
 
 ```bash
 npm install           # zero runtime deps — this just populates node_modules/.bin
 wrangler login        # caches OAuth; see 'wrangler whoami' to confirm
-gh auth login         # only needed when fetching artifacts from GitHub Releases
+gh auth login         # for cross-repo tag / release lookups when running locally
 ```
 
-For **Tauri apps** you also need a signing keypair. Generate **once, reuse across every DavidTech Tauri app**:
+For **Tauri apps** you also need the shared signing keypair. Generate **once, reuse across every DavidTech Tauri app, forever**:
 
 ```bash
-tauri signer generate -w ~/.tauri/davidtech_updater.key
+npx tauri signer generate -w ~/.tauri/davidtech_updater.key
 ```
 
-Keep the private key safe. The pubkey goes into every Tauri app's `tauri.conf.json`.
+Keep the private key safe — losing it means every app using its pubkey can never ship another update. The pubkey file (`.pub`) goes into every Tauri app's `tauri.conf.json`.
 
 ---
 
@@ -85,37 +108,41 @@ The `--repo` flag is optional but strongly recommended — without it, `publish`
 
 ## Publishing
 
+The primary path is **automatic** — bump + tag + push in the target app repo, and the scheduled workflow in this repo takes care of the rest. See "Automated release workflow" below.
+
+The CLI also supports three manual modes for debugging, emergency releases, or initial bring-up:
+
 ```bash
 npm run publish -- <name> [tag] [--from=<local-path>] [--dry-run]
 ```
 
-Resolution order for where artifacts come from:
-
-1. **`--from=<path>`** — use a local project root. Skips GitHub entirely. Good for Option A (local-build workflow).
-2. **Explicit tag** — download that GitHub Release's assets via `gh`.
+1. **`--from=<path>`** — read artifacts from a locally-built project root. Useful for proving out a new app before you trust CI with it.
+2. **Explicit tag** — download that GitHub Release's assets via `gh` (requires a GH Release to exist, produced by e.g. `tauri-action`).
 3. **Omit tag** — download the latest GitHub Release's assets.
 
-### Option A: local build → local publish (recommended starting point)
+`--dry-run` on any mode prints the wrangler uploads that would run (and writes the Tauri manifest to inspect) without actually uploading.
 
-```bash
-# In the target app's repo
-npm run tauri build        # or electron-builder, etc.
+## Automated release workflow
 
-# In davidtech-updater
-npm run publish -- beam-profiler --from=C:/path/to/dukane-beam-profiler
-```
+`.github/workflows/release.yml` in this repo runs every 15 minutes and on manual dispatch. Its pipeline:
 
-Zero GitHub secrets. Zero CI edits. Your wrangler OAuth on the maintainer laptop is the only credential in play.
+1. **Plan** (linux): `check-releases --json` compares each app in `apps.json` against what's live on R2. Emits a matrix of apps that need publishing.
+2. **Release** (windows, per-app matrix):
+   - Clone the target repo at the tag
+   - Install deps, install Rust toolchain for Tauri apps
+   - Build with `TAURI_SIGNING_PRIVATE_KEY` from repo secrets
+   - Publish to R2 with `CLOUDFLARE_API_TOKEN` from repo secrets
 
-### Option B: release-driven publish (automate later)
+The plan job's outputs include the full table of apps and their status, so the Actions run logs let you see what the cron decided at a glance.
 
-Push a tag in the app's repo → `tauri-action` (or equivalent) builds + creates a GitHub Release with assets attached → you run:
+**To trigger manually:** Actions tab → Release → Run workflow. Or `gh workflow run release.yml --repo mark2messmore/davidtech-updater`.
 
-```bash
-npm run publish -- beam-profiler v1.2.0
-```
+**To speed up the cadence:** edit the cron in the workflow — `*/5 * * * *` gives 5-minute polling; `0 * * * *` gives hourly.
 
-The CLI downloads the release's assets, generates the manifest, and uploads to R2.
+**Notes:**
+- App repos must be **public** for the workflow to clone them without auth. For private repos, add a PAT secret with cross-repo read scope and pass it to the `actions/checkout@v4` step that checks out the app.
+- The matching `tauri.conf.json` version must agree with the tag — if you tag `v1.2.0` but leave the conf at 1.1.0, Tauri builds a `_1.1.0_` bundle and the publish becomes a no-op (R2 already has 1.1.0, so `check-releases` won't re-schedule it).
+- `concurrency: release` prevents two cron ticks fighting. A build in progress finishes; the next cron tick waits.
 
 ---
 
@@ -186,10 +213,13 @@ Adapter stubs live at `src/adapters/{rust,qt}.js`. See §§23–24 of `AUTO_UPDA
 ## CLI reference
 
 ```
-npm run register -- <name> --framework=<fw> [--repo=<owner/name>]
-npm run publish  -- <name> [tag] [--from=<path>] [--dry-run]
-npm run apps                      # list registered apps
-npm run slug                      # generate a slug (register does this automatically)
+npm run register  -- <name> --framework=<fw> [--repo=<owner/name>]
+npm run publish   -- <name> [tag] [--from=<path>] [--dry-run]
+npm run apps                       # list registered apps
+npm run slug                       # generate a slug (register does this automatically)
+node bin/davidtech-updater.js check-releases [--json]
+                                   # compare each app's latest tag vs R2; list
+                                   # who needs publishing (--json for CI matrix)
 ```
 
 You can also invoke the bin directly: `node bin/davidtech-updater.js <command> <args>` — no `--` needed.
