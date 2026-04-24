@@ -51,7 +51,17 @@ export default {
       onlyIf: request.headers,
     });
 
-    if (!obj) return new Response("", { status: 404 });
+    if (!obj) {
+      // Tauri v2's updater plugin treats HTTP 204 as "client is up to date".
+      // Returning 204 for a missing latest.json means a registered-but-never-
+      // published app doesn't error in the client — it reports no update
+      // available, which is the honest answer. Other missing files stay 404;
+      // Electron's latest.yml and Qt's Updates.xml must exist before their
+      // respective clients look, and those updaters don't have the 204
+      // convention.
+      if (file === "latest.json") return new Response("", { status: 204 });
+      return new Response("", { status: 404 });
+    }
 
     const headers = new Headers();
     obj.writeHttpMetadata(headers);
