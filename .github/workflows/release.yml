@@ -123,8 +123,12 @@ jobs:
       - name: Summary
         if: always()
         shell: bash
+        working-directory: davidtech-updater
         run: |
-          echo "### ${{ matrix.app }} @ ${{ matrix.tag }}" >> $GITHUB_STEP_SUMMARY
-          echo "- framework: ${{ matrix.framework }}" >> $GITHUB_STEP_SUMMARY
-          echo "- status: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
-          echo "- endpoint: https://updates.davidtechllc.com/$(node -e 'console.log(JSON.parse(require(\"fs\").readFileSync(\"apps.json\",\"utf8\")).apps[\"${{ matrix.app }}\"].slug)')/${{ matrix.app }}/" >> $GITHUB_STEP_SUMMARY
+          SLUG=$(node -p "JSON.parse(require('fs').readFileSync('apps.json','utf8')).apps['${{ matrix.app }}'].slug")
+          {
+            echo "### ${{ matrix.app }} @ ${{ matrix.tag }}"
+            echo "- framework: ${{ matrix.framework }}"
+            echo "- status: ${{ job.status }}"
+            echo "- endpoint: https://updates.davidtechllc.com/$SLUG/${{ matrix.app }}/"
+          } >> $GITHUB_STEP_SUMMARY
