@@ -1,7 +1,7 @@
 {
   "name": "davidtech-updater",
-  "version": "0.1.0",
-  "description": "Shared auto-update tooling for DavidTech apps. Generates per-framework manifests and uploads installers to the shared Cloudflare R2 bucket behind updates.davidtechllc.com.",
+  "version": "0.2.0",
+  "description": "Auto-update control plane for DavidTech apps. Registry-based CLI + Cloudflare Worker behind updates.davidtechllc.com.",
   "type": "module",
   "bin": {
     "davidtech-updater": "bin/davidtech-updater.js"
@@ -9,13 +9,18 @@
   "files": [
     "bin",
     "src",
+    "apps.json",
     "README.md"
   ],
   "engines": {
     "node": ">=18"
   },
   "scripts": {
-    "help": "node bin/davidtech-updater.js --help"
+    "help": "node bin/davidtech-updater.js --help",
+    "register": "node bin/davidtech-updater.js register",
+    "publish": "node bin/davidtech-updater.js publish",
+    "apps": "node bin/davidtech-updater.js apps",
+    "slug": "node bin/davidtech-updater.js slug"
   },
   "repository": {
     "type": "git",

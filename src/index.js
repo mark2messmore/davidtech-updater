@@ -1,29 +1,35 @@
 import { slugCommand } from './commands/slug.js';
-import { initCommand } from './commands/init.js';
+import { registerCommand } from './commands/register.js';
 import { publishCommand } from './commands/publish.js';
+import { listApps } from './registry.js';
 
 const USAGE = `
-davidtech-updater — auto-update publish tool for DavidTech apps
+davidtech-updater — auto-update control plane for DavidTech apps
 
 Usage:
-  davidtech-updater <command> [options]
+  npm run <command> -- <args>       (from inside this repo)
+  node bin/davidtech-updater.js <command> <args>
 
 Commands:
-  slug                    Generate a new 12-char slug for a new app
-  init                    Scaffold davidtech.config.json in the current directory
-  publish [--dry-run]     Build manifest and upload artifacts to R2
+  register <name> --framework=<fw> [--repo=<owner/name>]
+                                    Register a new app in apps.json
+  publish <name> [tag] [--from=<path>] [--dry-run]
+                                    Publish an app's release to R2
+  apps                              List registered apps
+  slug                              Generate a 12-char slug (not usually needed —
+                                    'register' does this automatically)
 
-Config file (./davidtech.config.json):
-  {
-    "slug": "q3k2m8p9x7h1",
-    "app": "widget-tracker",
-    "framework": "electron" | "tauri" | "rust" | "qt"
-  }
+Frameworks: electron | tauri | rust | qt
 
-Required env for 'publish':
-  CLOUDFLARE_API_TOKEN    Scoped to R2 write on the davidtech-app-updates bucket
+Publish source:
+  default — download assets from GitHub Releases via 'gh' (uses the registry's repo)
+  --from  — read artifacts from a local project root (useful for Option A: local builds)
 
-See https://github.com/mark2messmore/davidtech-updater for full docs.
+Required on the machine running 'publish':
+  wrangler    Cached OAuth or CLOUDFLARE_API_TOKEN with R2 write on davidtech-app-updates
+  gh          Authenticated with access to the app's repo (only when fetching from GitHub)
+
+See README.md for the full workflow.
 `.trim();
 
 export async function main(argv) {
@@ -32,10 +38,12 @@ export async function main(argv) {
   switch (cmd) {
     case 'slug':
       return slugCommand(rest);
-    case 'init':
-      return initCommand(rest);
+    case 'register':
+      return registerCommand(rest);
     case 'publish':
       return publishCommand(rest);
+    case 'apps':
+      return listCommand();
     case '--help':
     case '-h':
     case 'help':
@@ -47,4 +55,19 @@ export async function main(argv) {
       console.log(USAGE);
       process.exit(2);
   }
+}
+
+function listCommand() {
+  const entries = listApps();
+  if (entries.length === 0) {
+    console.log('No apps registered. Use: npm run register -- <name> --framework=<fw>');
+    return;
+  }
+  const rows = entries.map(([name, app]) => ({
+    name,
+    framework: app.framework,
+    slug: app.slug,
+    repo: app.repo ?? '(none)',
+  }));
+  console.table(rows);
 }

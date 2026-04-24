@@ -1,46 +1,39 @@
-import fs from 'node:fs';
-import path from 'node:path';
+// Shared constants + validators. Used by the CLI and kept in sync with the
+// regexes in worker/src/index.js.
 
 export const BUCKET = 'davidtech-app-updates';
 export const UPDATE_DOMAIN = 'updates.davidtechllc.com';
-export const CONFIG_FILE = 'davidtech.config.json';
 export const FRAMEWORKS = ['electron', 'tauri', 'rust', 'qt'];
 
-// Worker accepts these slugs — keep this regex in sync with worker/src/index.js.
-const SLUG_RE = /^[a-z0-9]{8,32}$/;
-const APP_RE = /^[a-z0-9-]{1,40}$/;
+// Worker path validation — these must match worker/src/index.js exactly,
+// otherwise a value that passes CLI validation can still 404 at the edge.
+export const SLUG_RE = /^[a-z0-9]{8,32}$/;
+export const APP_RE = /^[a-z0-9-]{1,40}$/;
 
-export function loadConfig(cwd = process.cwd()) {
-  const p = path.join(cwd, CONFIG_FILE);
-  if (!fs.existsSync(p)) {
-    throw new Error(
-      `No ${CONFIG_FILE} in ${cwd}.\nRun:  npx davidtech-updater init`
-    );
+// Sensible GitHub "owner/repo" shape — GitHub's real rules are looser but
+// typos cause silent failures later, so keep this strict.
+export const REPO_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]*\/[A-Za-z0-9][A-Za-z0-9_.-]*$/;
+
+export function assertSlug(slug) {
+  if (!slug || !SLUG_RE.test(slug)) {
+    throw new Error(`Invalid slug — must match ${SLUG_RE} (got: ${JSON.stringify(slug)})`);
   }
-  let cfg;
-  try {
-    cfg = JSON.parse(fs.readFileSync(p, 'utf8'));
-  } catch (e) {
-    throw new Error(`Failed to parse ${CONFIG_FILE}: ${e.message}`);
-  }
-  validate(cfg);
-  return cfg;
 }
 
-function validate(cfg) {
-  if (!cfg.slug || !SLUG_RE.test(cfg.slug)) {
-    throw new Error(
-      `Invalid "slug" — must match /^[a-z0-9]{8,32}$/ (got: ${JSON.stringify(cfg.slug)})`
-    );
+export function assertApp(name) {
+  if (!name || !APP_RE.test(name)) {
+    throw new Error(`Invalid app name — must match ${APP_RE} (got: ${JSON.stringify(name)})`);
   }
-  if (!cfg.app || !APP_RE.test(cfg.app)) {
-    throw new Error(
-      `Invalid "app" — must match /^[a-z0-9-]{1,40}$/ (got: ${JSON.stringify(cfg.app)})`
-    );
+}
+
+export function assertFramework(fw) {
+  if (!FRAMEWORKS.includes(fw)) {
+    throw new Error(`Invalid framework — must be one of ${FRAMEWORKS.join('|')} (got: ${JSON.stringify(fw)})`);
   }
-  if (!FRAMEWORKS.includes(cfg.framework)) {
-    throw new Error(
-      `Invalid "framework" — must be one of ${FRAMEWORKS.join('|')} (got: ${JSON.stringify(cfg.framework)})`
-    );
+}
+
+export function assertRepo(repo) {
+  if (!repo || !REPO_RE.test(repo)) {
+    throw new Error(`Invalid repo — must be "owner/name" (got: ${JSON.stringify(repo)})`);
   }
 }
