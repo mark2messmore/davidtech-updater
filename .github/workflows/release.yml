@@ -36,7 +36,10 @@ jobs:
       - name: Compute release plan
         id: plan
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Fine-grained PAT with Contents:Read on every DavidTech app repo.
+          # Needed because target repos are private — git ls-remote over
+          # anonymous HTTPS 404s on private repos.
+          DAVIDTECH_REPO_TOKEN: ${{ secrets.DAVIDTECH_REPO_TOKEN }}
         run: |
           set -e
           echo "Checking which apps have new tags..."
@@ -69,6 +72,8 @@ jobs:
           repository: ${{ matrix.repo }}
           ref: ${{ matrix.tag }}
           path: app
+          # Same PAT as the plan step — needed when the target repo is private.
+          token: ${{ secrets.DAVIDTECH_REPO_TOKEN }}
 
       - uses: actions/setup-node@v4
         with:

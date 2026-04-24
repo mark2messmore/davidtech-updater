@@ -65,6 +65,7 @@ In `mark2messmore/davidtech-updater` → Settings → Secrets and variables → 
 | `TAURI_SIGNING_PRIVATE_KEY` | Contents of `~/.tauri/davidtech_updater.key` — paste the whole file |
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | The password you set when generating the key (omit if you hit Enter twice for no password) |
 | `CLOUDFLARE_API_TOKEN` | R2 write token scoped to `davidtech-app-updates` |
+| `DAVIDTECH_REPO_TOKEN` | Fine-grained PAT with `Contents: Read-only` + `Metadata: Read-only` on every DavidTech app repo. Required for accessing private target repos during tag lookup and checkout. For **public** target repos only, this secret is optional. |
 
 Without these, the scheduled release workflow will fail visibly on the first run after a tagged push — you don't have to set them to merge this repo, but nothing ships until they're set.
 

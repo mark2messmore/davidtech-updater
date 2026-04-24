@@ -90,8 +90,16 @@ export function tagToVersion(tag) {
 //   needs no auth. (For private target repos, swap in an HTTPS URL with a
 //   token; out of scope here — documented in README.)
 export function latestSemverTag(repo) {
+  // Private DavidTech repos need an HTTPS token to list refs. The CI workflow
+  // sets DAVIDTECH_REPO_TOKEN from a fine-grained PAT with read:contents on
+  // every DavidTech app repo; local runs use cached git credentials or just
+  // anonymous HTTPS for public repos.
+  const token = process.env.DAVIDTECH_REPO_TOKEN;
+  const remote = token
+    ? `https://x-access-token:${token}@github.com/${repo}.git`
+    : `https://github.com/${repo}.git`;
   const out = execSync(
-    `git ls-remote --tags https://github.com/${repo}.git`,
+    `git ls-remote --tags ${remote}`,
     { encoding: 'utf8' }
   );
   // Each line is "<sha>\trefs/tags/<tagname>". Annotated tags also appear as
