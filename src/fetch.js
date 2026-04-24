@@ -90,34 +90,40 @@ export function tagToVersion(tag) {
 //   needs no auth. (For private target repos, swap in an HTTPS URL with a
 //   token; out of scope here — documented in README.)
 export function latestSemverTag(repo) {
-  // Private DavidTech repos need an HTTPS token to list refs. The CI workflow
-  // sets DAVIDTECH_REPO_TOKEN from a fine-grained PAT with read:contents on
-  // every DavidTech app repo; local runs use cached git credentials or just
-  // anonymous HTTPS for public repos.
+  // Use `gh api` rather than `git ls-remote`: fine-grained PATs have subtle
+  // URL-embedded credential quirks (x-access-token: is GitHub App specific,
+  // plain-token form works for PATs but not GH App tokens, etc.). gh handles
+  // the Authorization header correctly for any PAT shape via GH_TOKEN.
+  //
+  // The PAT lives in DAVIDTECH_REPO_TOKEN (set in CI); gh CLI reads GH_TOKEN.
+  // We translate here so callers don't need to set two env vars.
+  assertGhAvailable();
   const token = process.env.DAVIDTECH_REPO_TOKEN;
-  const remote = token
-    ? `https://x-access-token:${token}@github.com/${repo}.git`
-    : `https://github.com/${repo}.git`;
-  const out = execSync(
-    `git ls-remote --tags ${remote}`,
-    { encoding: 'utf8' }
-  );
-  // Each line is "<sha>\trefs/tags/<tagname>". Annotated tags also appear as
-  // "<sha>\trefs/tags/<tagname>^{}" — the "peeled" commit. We strip ^{} so
-  // both forms collapse to a single tag name.
+  const env = { ...process.env };
+  if (token) env.GH_TOKEN = token;
+
+  let out;
+  try {
+    out = execSync(
+      `gh api repos/${repo}/tags --paginate --jq ".[].name"`,
+      { encoding: 'utf8', env }
+    );
+  } catch (err) {
+    throw new Error(
+      `Failed to list tags for ${repo} via 'gh api'. ` +
+        `For private repos, set DAVIDTECH_REPO_TOKEN to a fine-grained PAT with ` +
+        `Contents:Read scoped to this repo. Underlying error: ` +
+        String(err.stderr ?? err.message ?? err).split('\n')[0]
+    );
+  }
+
   const tags = out
     .split('\n')
-    .map((line) => {
-      const m = line.match(/refs\/tags\/(v\d+\.\d+\.\d+[^\s]*?)(?:\^\{\})?$/);
-      return m ? m[1] : null;
-    })
-    .filter((t) => t !== null);
-
-  // De-dupe peeled+unpeeled pairs and sort semver.
-  const unique = [...new Set(tags)];
-  if (unique.length === 0) return null;
-  unique.sort(compareSemverTag);
-  return unique[unique.length - 1];
+    .map((s) => s.trim())
+    .filter((s) => /^v\d+\.\d+\.\d+/.test(s));
+  if (tags.length === 0) return null;
+  tags.sort(compareSemverTag);
+  return tags[tags.length - 1];
 }
 
 // Compare "v1.2.3" style tags numerically. Returns -1/0/1 like a sort comparator.
