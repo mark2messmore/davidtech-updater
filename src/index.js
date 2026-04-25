@@ -2,6 +2,7 @@ import { slugCommand } from './commands/slug.js';
 import { registerCommand } from './commands/register.js';
 import { publishCommand } from './commands/publish.js';
 import { bumpCommand } from './commands/bump.js';
+import { buildCommand } from './commands/build.js';
 import { setPathCommand } from './commands/set-path.js';
 import { listApps } from './registry.js';
 
@@ -23,9 +24,12 @@ Commands:
   bump <name> <patch|minor|major|x.y.z>
                                     Bump version in lockstep across the app's
                                     package.json + Cargo.toml + tauri.conf.json
+  build <name> [--skip-install]     Run the local production build. Reads the
+                                    Tauri signing key from %USERPROFILE%/.tauri/
+                                    automatically — never asks the user.
   publish <name> [--from=<path>] [--dry-run]
-                                    Build artifacts already at <path> get
-                                    signed-and-uploaded to R2 + manifest written
+                                    Sign-and-upload artifacts to R2. Defaults to
+                                    the registered localPath if --from omitted.
   slug                              Generate a 12-char slug
 
 Frameworks: electron | tauri | rust | qt
@@ -50,6 +54,8 @@ export async function main(argv) {
       return setPathCommand(rest);
     case 'bump':
       return bumpCommand(rest);
+    case 'build':
+      return buildCommand(rest);
     case 'publish':
       return publishCommand(rest);
     case 'apps':

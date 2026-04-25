@@ -60,11 +60,19 @@ This rewrites `package.json` + `src-tauri/tauri.conf.json` + `src-tauri/Cargo.to
 ### Step 4 — Build locally
 
 ```bash
-npm install                    # in the app's localPath, only if package-lock changed
-npm run tauri build            # in the app's localPath
+node bin/davidtech-updater.js build <app>
 ```
 
-This takes 3-8 minutes on a warm cargo cache. The build emits artifacts to `src-tauri/target/release/bundle/nsis/`. Watch stderr.
+That's it. **Don't run `npm run tauri build` directly. Don't ask the user about the signing key. Don't tell the user to export env vars.** The `build` command:
+
+- Reads the signing key from `%USERPROFILE%\.tauri\davidtech_updater.key` (the only place it ever lives) and passes it to the build as `TAURI_SIGNING_PRIVATE_KEY`
+- Resolves `localPath` from `apps.json` automatically
+- Runs `npm install` then `npm run tauri build` in that directory
+- Verifies `.nsis.zip` + `.nsis.zip.sig` landed in the bundle dir before returning success
+
+Takes 3–8 minutes on a warm cargo cache. The signing key path is fixed; the password is empty; the maintainer's machine has both. **There is nothing for the user to confirm here.** If the key file is genuinely missing, the command fails loudly with "Tauri signing key not found at ..." — only then escalate to the user.
+
+Add `--skip-install` if you've already run `npm install` in this session and `package-lock.json` hasn't changed (saves ~30s).
 
 ### Step 5 — Fix-and-retry loop on build failure
 
@@ -73,7 +81,8 @@ If the build fails, **read the actual error output**, identify the cause, propos
 | Symptom | Cause | Fix |
 |---|---|---|
 | `Found version mismatched Tauri packages: tauri-plugin-X (vM.N) : @tauri-apps/plugin-X (vM.N+1)` | Cargo.lock pinned the Rust crate at an older minor than npm resolved | `cargo update -p tauri-plugin-X` in `<localPath>/src-tauri`, then retry |
-| `signing private key not set` | `TAURI_SIGNING_PRIVATE_KEY` env var missing | Tell the user to set it in their shell from `%USERPROFILE%\.tauri\davidtech_updater.key` (see Signing section below) |
+| `Tauri signing key not found at <path>` | Key file missing on this machine | **Stop.** Tell the user the key is missing — don't try to recover. They need to copy it from another machine or regenerate (which would invalidate every shipped pubkey). |
+| `failed to read signing key` mid-build | Should never happen — `build` already loaded it before spawn | Surface to user, don't loop |
 | Rust compile error in app code | Real bug in the app | Open the file, propose the fix, ask before applying |
 
 If the same error fires twice, **stop and surface it to the user**. Don't loop blindly.
@@ -81,10 +90,10 @@ If the same error fires twice, **stop and surface it to the user**. Don't loop b
 ### Step 6 — Publish to R2
 
 ```bash
-node bin/davidtech-updater.js publish <app> --from=<localPath>
+node bin/davidtech-updater.js publish <app>
 ```
 
-This uses the existing `publish.js` flow: reads artifacts from `<localPath>/src-tauri/target/release/bundle/nsis/`, generates `latest.json` inlining the Ed25519 signature from the `.sig` file, uploads `.nsis.zip` + `.sig` + `latest.json` to R2 via `npx wrangler r2 object put`. Watch for the `✅ Published — live at https://...` line.
+`publish` defaults to the registered `localPath` — no `--from` needed. Reads artifacts from `<localPath>/src-tauri/target/release/bundle/nsis/`, generates `latest.json` inlining the Ed25519 signature from the `.sig` file, uploads `.nsis.zip` + `.sig` + `latest.json` to R2 via `npx wrangler r2 object put`. Watch for the `✅ Published — live at https://...` line.
 
 ### Step 7 — Verify it landed
 
@@ -178,23 +187,9 @@ If you add a framework, the diff is exactly: one new file in `src/adapters/`, on
 
 ## Signing
 
-The Ed25519 keypair lives at `%USERPROFILE%\.tauri\davidtech_updater.key` (private) and `%USERPROFILE%\.tauri\davidtech_updater.key.pub` (public). The pubkey is baked into every app's `tauri.conf.json`. The private key signs the `.nsis.zip` during `npm run tauri build`.
+The Ed25519 keypair lives at `%USERPROFILE%\.tauri\davidtech_updater.key` (private) and `%USERPROFILE%\.tauri\davidtech_updater.key.pub` (public). The pubkey is baked into every app's `tauri.conf.json`. The private key signs the `.nsis.zip` during the build.
 
-**To set the env vars before a build:**
-
-PowerShell:
-```powershell
-$env:TAURI_SIGNING_PRIVATE_KEY = (Get-Content $env:USERPROFILE\.tauri\davidtech_updater.key -Raw)
-$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = ""   # if no password was set
-```
-
-Bash:
-```bash
-export TAURI_SIGNING_PRIVATE_KEY="$(cat "$USERPROFILE/.tauri/davidtech_updater.key")"
-export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
-```
-
-If the build fails with "no signing key" / "could not find signing private key", that's the missing piece — set them and retry.
+**The `build` command reads this file automatically every run.** You (Claude) never set env vars in the user's shell. You never ask the user about the key. You never print the key contents. The path is fixed; the password is empty; the only failure mode is "file genuinely missing" — and in that case you stop and surface to the user, you don't try to recover (regenerating the keypair would invalidate the pubkey baked into every shipped app, breaking auto-updates forever).
 
 **Never copy the private key into a repo, an env file, an Action secret, or anywhere else.** It signs every DavidTech app's auto-updates. Compromise = arbitrary code execution on every installed app on every customer machine.
 

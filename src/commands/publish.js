@@ -42,7 +42,13 @@ export async function publishCommand(args) {
 
   const app = getApp(name);
   const dryRun = Boolean(flags['dry-run']);
-  const fromLocal = flags.from ? path.resolve(flags.from) : null;
+  // --from explicit override; otherwise fall back to the registered localPath.
+  // The AI runbook never passes --from since localPath is in apps.json.
+  const fromLocal = flags.from
+    ? path.resolve(flags.from)
+    : app.localPath
+    ? path.resolve(app.localPath)
+    : null;
 
   let artifactsDir;
   let version;

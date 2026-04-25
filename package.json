@@ -22,6 +22,7 @@
     "register": "node bin/davidtech-updater.js register",
     "set-path": "node bin/davidtech-updater.js set-path",
     "bump": "node bin/davidtech-updater.js bump",
+    "build": "node bin/davidtech-updater.js build",
     "publish": "node bin/davidtech-updater.js publish",
     "slug": "node bin/davidtech-updater.js slug"
   },
