@@ -1,7 +1,7 @@
 {
   "name": "davidtech-updater",
-  "version": "0.3.0",
-  "description": "Auto-update control plane for DavidTech apps. Registry-based CLI + Cloudflare Worker behind updates.davidtechllc.com.",
+  "version": "0.4.0",
+  "description": "AI-driven auto-update control plane for DavidTech apps. Local builds, R2 publish, no CI required.",
   "type": "module",
   "bin": {
     "davidtech-updater": "bin/davidtech-updater.js"
@@ -10,16 +10,19 @@
     "bin",
     "src",
     "apps.json",
-    "README.md"
+    "README.md",
+    "RELEASES.md"
   ],
   "engines": {
     "node": ">=18"
   },
   "scripts": {
     "help": "node bin/davidtech-updater.js --help",
-    "register": "node bin/davidtech-updater.js register",
-    "publish": "node bin/davidtech-updater.js publish",
     "apps": "node bin/davidtech-updater.js apps",
+    "register": "node bin/davidtech-updater.js register",
+    "set-path": "node bin/davidtech-updater.js set-path",
+    "bump": "node bin/davidtech-updater.js bump",
+    "publish": "node bin/davidtech-updater.js publish",
     "slug": "node bin/davidtech-updater.js slug"
   },
   "repository": {

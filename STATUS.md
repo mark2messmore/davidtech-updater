@@ -1,58 +1,44 @@
 # STATUS
 
-> Project-management state for `davidtech-updater`. Architecture and conventions live in `CLAUDE.md`; user-facing docs in `README.md`. This file is for what's happening *this week*.
+> Project-management state for `davidtech-updater`. Architecture and runbook live in `CLAUDE.md`; user-facing docs in `README.md`.
 
-**last_touched:** 2026-04-24
+**last_touched:** 2026-04-25
 
 ---
 
 ## Now
 
-Repo is at `v0.3.0` (uncommitted) — the scheduled release workflow is built. `beam-profiler` is registered. Manual `publish` path still works as fallback. **Immediate blocker on the automation:** three GitHub repo secrets need to be set in this repo's Settings → Secrets: `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` (skip if no password), `CLOUDFLARE_API_TOKEN`. Until those land, the cron will fire but the first build job will fail on signing.
+`v0.4.0` — refactored to the AI-driven local-build model. **GitHub Actions release pipeline removed.** No more cron, no more PATs, no more cross-repo checkout. The release flow is now: open this repo in Claude Code, say "hey I updated <app>" in plain English, and Claude follows the runbook in CLAUDE.md to bump → build → publish → log. `apps.json` extended with `localPath` for each app; new commands `bump` and `set-path`.
+
+Ready for the first real test of the new flow: `beam-profiler` is at source v1.2.1 (dialog plugin alignment fix already applied locally) but no R2 publish has succeeded yet for any version. Next conversation: "hey, ship beam profiler 1.2.1" should run end-to-end.
 
 ## Next actions
 
 In order:
 
-1. **Set three GitHub repo secrets** at https://github.com/mark2messmore/davidtech-updater/settings/secrets/actions —
-   - `TAURI_SIGNING_PRIVATE_KEY` = entire contents of `%USERPROFILE%\.tauri\davidtech_updater.key` (paste the file)
-   - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` = key password if one was set; skip this secret if it's empty
-   - `CLOUDFLARE_API_TOKEN` = R2 write token scoped to `davidtech-app-updates` (create at https://dash.cloudflare.com/profile/api-tokens → Custom token → R2: Edit on this specific bucket)
+1. **First end-to-end test of the new flow.** From this repo, say: "hey I updated beam profiler". Claude reads CLAUDE.md, sees source is at v1.2.1 with no prior ship in RELEASES.md, asks user to confirm shipping 1.2.1, runs `npm run tauri build` in `C:\Users\mark2\Documents\MyRepos\dukane-beam-profiler`, then `publish beam-profiler --from=<path>`, then appends to RELEASES.md.
 
-2. **Commit + tag beam-profiler v1.2.0** (bundles the auto-update wiring and Settings-menu consolidation from this session):
-   ```bash
-   cd ../../Documents/MyRepos/dukane-beam-profiler
-   # Bump to 1.2.0 in package.json, src-tauri/Cargo.toml, src-tauri/tauri.conf.json
-   git add -A && git commit -m "v1.2.0 — auto-update support + Settings menu"
-   git tag v1.2.0
-   git push && git push --tags
-   ```
+2. **Verify R2 manifest at the public URL** — `curl https://updates.davidtechllc.com/0ex2s23yt30r/beam-profiler/latest.json` should return v1.2.1 with an Ed25519 signature.
 
-3. **Watch the scheduled workflow run** at https://github.com/mark2messmore/davidtech-updater/actions, or kick it immediately without waiting 15 min:
-   ```bash
-   gh workflow run release.yml --repo mark2messmore/davidtech-updater
-   ```
+3. **Close the auto-update loop** — install the v1.1.0 build (or any prior shipped build) on a clean second machine / VM, click `SETTINGS → Check for Updates`, confirm the upgrade to v1.2.1 completes and relaunches cleanly.
 
-4. **Verify** with `curl https://updates.davidtechllc.com/0ex2s23yt30r/beam-profiler/latest.json` — should return a manifest with `"version": "1.2.0"` and an inlined Ed25519 signature.
-
-5. **Close the loop** by installing the previously-released v1.1.0 build (on any second machine / VM / fresh user), click `SETTINGS → Check for Updates`, confirm the v1.1.0 → v1.2.0 upgrade completes and relaunches cleanly.
+4. **Delete the unused GitHub Secret** — `DAVIDTECH_REPO_TOKEN` at https://github.com/mark2messmore/davidtech-updater/settings/secrets/actions. The PAT it referenced is no longer used by anything in this repo. (`TAURI_SIGNING_PRIVATE_KEY` and `CLOUDFLARE_API_TOKEN` were also unused after the workflow deletion — same cleanup.)
 
 ## Backlog / not yet started
 
-- **Migrate `dukane-cam-viewer`** off its inline `scripts/publish.js`. Constraint: keep the same slug (`ly0afixsg9hq`) so installed copies don't lose the update feed. Pre-edit the generated `apps.json` entry to carry the existing slug before the first scheduled run picks it up.
-- **Rust adapter** (`src/adapters/rust.js` — stubbed). Only build when there's an actual Rust-native DavidTech app that needs it.
+- **Migrate `dukane-cam-viewer`** off its inline `scripts/publish.js`. Constraint: keep the same slug (`ly0afixsg9hq`) so installed copies don't lose the update feed. After registering, `set-path` to its source dir.
+- **Rust adapter** (`src/adapters/rust.js` — stubbed). Build when there's an actual Rust-native DavidTech app that needs it.
 - **Qt adapter** (`src/adapters/qt.js` — stubbed). Same — build on demand.
-- **Build caching** — workflow has Rust target cache, but node_modules cache and Tauri bundler intermediate cache could shave more time. Revisit once release cadence justifies it.
-- **Private-repo support** — the workflow's `actions/checkout@v4` on the target repo works for public repos only. Add a PAT secret + token input when a private DavidTech app needs auto-releasing.
+- **electron + rust + qt support in `bump`** — the bumper currently only handles tauri's three version files. Add framework branches when those apps come online.
 
 ## Log
 
-- **2026-04-24** — `v0.3.0` (uncommitted). Added `check-releases` command that diffs registered apps' latest v-tags against R2 manifests, emits a matrix JSON. Added `.github/workflows/release.yml` — 15-minute cron + manual dispatch, plan job (linux) emits matrix, release job (windows, matrix) clones target + builds + publishes. Signing key + Cloudflare token live in this repo's Secrets only; target apps carry no release plumbing. Updated README + CLAUDE.md to reflect the automation as the primary path, with manual publish retained as fallback for debugging / emergency / first bring-up.
-- **2026-04-24** — Scaffolded repo at `v0.1.0` (per-app CLI dep model with `davidtech.config.json`). Worker + CLI + README + CI, published to `github.com/mark2messmore/davidtech-updater`, tagged `v0.1.0`.
-- **2026-04-24** — Refactored to control-plane model at `v0.2.0`. Breaking change from `v0.1.0`: `init` removed, `register` added, `apps.json` registry introduced, adapters rewritten to be pure over a ctx object. Smoke-tested: register validates + refuses dupes; publish on a synthetic Tauri tree generates a well-formed `latest.json` with the right URL and picks up `RELEASE_NOTES.md`. Tagged `v0.2.0`, CI green.
+- **2026-04-25** — `v0.4.0`. Removed `.github/workflows/release.yml`, removed `src/commands/check-releases.js`, removed `STATUS.md` references to GH cron + PAT + secrets. Added `localPath` field to `apps.json` (schemaVersion bumped 1 → 2). Added `bump` command (rewrites package.json + Cargo.toml + tauri.conf.json in lockstep, refreshes both lockfiles), `set-path` command, `findApp()` fuzzy matcher in registry. Created `RELEASES.md` as the append-only ship log. Rewrote `CLAUDE.md` as a natural-language release runbook — when the user mentions an app + a release intent, Claude drives bump → build → publish → log entirely on the maintainer's machine. **No CI.** GitHub holds source code only; Cloudflare R2 + Worker handle distribution; Claude orchestrates.
+- **2026-04-24** — `v0.3.0`. Added scheduled GH Actions release pipeline + `check-releases` command + cron + PAT-based cross-repo checkout. *Removed in v0.4.0.*
+- **2026-04-24** — `v0.2.0`. Refactored to control-plane model. Breaking change from `v0.1.0`: `init` removed, `register` added, `apps.json` registry introduced, adapters rewritten as pure functions of ctx. Smoke-tested.
+- **2026-04-24** — `v0.1.0`. Initial scaffold (per-app CLI dep model with `davidtech.config.json`). Worker + CLI + README + CI.
 
 ## Open questions
 
-- The `tauri.conf.json.version` must match the git tag, or the build produces a differently-named bundle and the R2 publish becomes a no-op. First end-to-end run will confirm. Could add a version-consistency check to the workflow as a pre-build step.
-- `actions/checkout@v4` defaults to `fetch-depth: 1` — if the target app needs history for version-stamping (Tauri usually doesn't), bump `fetch-depth` in the workflow.
-- Cron cadence is `*/15 * * * *` (15 min). GitHub sometimes delays scheduled runs during peak load. If immediate release is critical, use `gh workflow run` instead of waiting.
+- **Cargo.lock refresh during bump** — the `bump` command runs `cargo metadata --offline` to rewrite Cargo.lock with the new package version, falling back to non-offline if needed. Watch this on the first real bump; if the offline path consistently fails (e.g. crates haven't been fetched since the last touch), drop the offline attempt and just run `cargo metadata` directly.
+- **Multi-machine release** — current model assumes Mark's machine is the only build machine. If a second maintainer needs to ship from their laptop, they'd need: signing key copy, wrangler login, and `localPath` in apps.json pointing at *their* checkout location. The schema supports this (per-machine `localPath`s would need a different field name though — defer until needed).

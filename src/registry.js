@@ -6,13 +6,12 @@ import {
   assertApp,
   assertFramework,
   assertRepo,
+  assertLocalPath,
 } from './config.js';
 
-// apps.json lives at the repo root — not in the user's cwd. We resolve it from
-// this module's path so `npm run publish <app>` works from any subdir.
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REGISTRY_PATH = path.resolve(__dirname, '..', 'apps.json');
-const CURRENT_SCHEMA = 1;
+const CURRENT_SCHEMA = 2;
 
 export function registryPath() {
   return REGISTRY_PATH;
@@ -26,8 +25,6 @@ export function loadRegistry() {
   if (!parsed.apps || typeof parsed.apps !== 'object') {
     throw new Error(`apps.json malformed — missing "apps" object`);
   }
-  // Forward-compat hook: surface unknown schema versions before we walk entries
-  // that may have a shape we don't know how to read.
   if (parsed.schemaVersion && parsed.schemaVersion > CURRENT_SCHEMA) {
     throw new Error(
       `apps.json schemaVersion ${parsed.schemaVersion} is newer than this CLI understands ` +
@@ -52,10 +49,33 @@ export function getApp(name) {
     const known = Object.keys(reg.apps);
     const hint = known.length
       ? `Known apps: ${known.join(', ')}`
-      : `No apps registered yet. Use 'npm run register <name>' first.`;
+      : `No apps registered yet. Use 'register' first.`;
     throw new Error(`App "${name}" not in registry.\n${hint}`);
   }
   return app;
+}
+
+// Fuzzy match an app name from human input — "beam profiler" → "beam-profiler",
+// "BEAM" → "beam-profiler", "the laser thing" → null. Returns the canonical
+// registry key, or null if there's no clear single match.
+//
+// This is the entry point for the "hey I updated beam profiler" flow: the AI
+// reads the user's wording, calls findApp(), gets the registry key, then runs
+// the rest of the runbook with the canonical name.
+export function findApp(query) {
+  if (!query) return null;
+  const reg = loadRegistry();
+  const names = Object.keys(reg.apps);
+  if (names.length === 0) return null;
+
+  const normalize = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const q = normalize(query);
+
+  const exact = names.find((n) => normalize(n) === q);
+  if (exact) return exact;
+
+  const partial = names.filter((n) => normalize(n).includes(q) || q.includes(normalize(n)));
+  return partial.length === 1 ? partial[0] : null;
 }
 
 export function addApp(name, entry) {
@@ -63,19 +83,36 @@ export function addApp(name, entry) {
   assertSlug(entry.slug);
   assertFramework(entry.framework);
   if (entry.repo) assertRepo(entry.repo);
+  if (entry.localPath) assertLocalPath(entry.localPath);
 
   const reg = loadRegistry();
   if (reg.apps[name]) {
     throw new Error(
-      `App "${name}" already registered — edit apps.json manually if you need to change it`
+      `App "${name}" already registered — use updateApp() or edit apps.json manually`
     );
   }
   reg.apps[name] = {
     slug: entry.slug,
     framework: entry.framework,
     ...(entry.repo ? { repo: entry.repo } : {}),
+    ...(entry.localPath ? { localPath: entry.localPath } : {}),
     registeredAt: new Date().toISOString(),
   };
+  saveRegistry(reg);
+  return reg.apps[name];
+}
+
+// Patch fields on an existing app entry. Used to set/change localPath after
+// registration without hand-editing apps.json.
+export function updateApp(name, patch) {
+  const reg = loadRegistry();
+  if (!reg.apps[name]) {
+    throw new Error(`App "${name}" not in registry — register it first`);
+  }
+  if (patch.localPath !== undefined) assertLocalPath(patch.localPath);
+  if (patch.repo !== undefined) assertRepo(patch.repo);
+
+  reg.apps[name] = { ...reg.apps[name], ...patch };
   saveRegistry(reg);
   return reg.apps[name];
 }

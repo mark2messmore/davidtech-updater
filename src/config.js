@@ -37,3 +37,12 @@ export function assertRepo(repo) {
     throw new Error(`Invalid repo — must be "owner/name" (got: ${JSON.stringify(repo)})`);
   }
 }
+
+// localPath is the absolute path to the app's source on this maintainer's machine.
+// Used by the AI-driven local-build flow (no validation against existence here —
+// machines move, paths drift; the runbook checks at use-time and prompts to fix).
+export function assertLocalPath(p) {
+  if (typeof p !== 'string' || p.length === 0) {
+    throw new Error(`Invalid localPath — must be a non-empty string (got: ${JSON.stringify(p)})`);
+  }
+}

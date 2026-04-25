@@ -1,3 +1,4 @@
+import path from 'node:path';
 import {
   assertApp,
   assertFramework,
@@ -9,11 +10,11 @@ import { addApp } from '../registry.js';
 
 const USAGE = `
 Usage:
-  npm run register -- <name> --framework=<electron|tauri|rust|qt> [--repo=<owner/name>]
+  register <name> --framework=<electron|tauri|rust|qt> [--repo=<owner/name>] [--local=<absolute-path>]
 
-  --repo is optional but strongly recommended — it's the GitHub repo that
-  'publish' downloads release artifacts from. You can always edit apps.json
-  later.
+  --repo  optional — the GitHub repo (used for documentation / future GH-fetch fallback).
+  --local optional — absolute path to the app's source on this machine. Required for the
+          AI-driven local-build release flow. Add it now or with 'set-path' later.
 `.trim();
 
 export function registerCommand(args) {
@@ -36,9 +37,11 @@ export function registerCommand(args) {
   const repo = flags.repo;
   if (repo) assertRepo(repo);
 
+  const localPath = flags.local ? path.resolve(flags.local) : undefined;
+
   // addApp() guards against duplicate names and enforces all field shapes.
   const slug = generateSlug();
-  const entry = addApp(name, { slug, framework, repo });
+  const entry = addApp(name, { slug, framework, repo, localPath });
 
   console.log(`\nRegistered "${name}":`);
   console.log(JSON.stringify(entry, null, 2));

@@ -1,23 +1,18 @@
 # davidtech-updater
 
-Auto-update **control plane** for DavidTech apps. One repo. One registry of every app. One place that holds the signing key and the Cloudflare token.
+AI-driven auto-update **control plane** for DavidTech apps. One repo. One registry of every app. One place to ship from. **No CI** — Claude builds locally on the maintainer's machine and uploads directly to Cloudflare R2.
 
 ## The shipping workflow
 
-```bash
-# In the app repo (e.g. dukane-beam-profiler):
-# bump version in package.json / Cargo.toml / tauri.conf.json
-git commit -am "v1.2.0"
-git tag v1.2.0
-git push --tags
+Open this repo in Claude Code. Tell Claude in plain English:
 
-# Wait up to 15 minutes. A scheduled workflow in this repo builds + signs +
-# publishes automatically. Next time any installed app checks, it sees the new version.
-```
+> hey, I updated beam profiler
 
-That's the entire loop. Target apps themselves hold only the in-app wiring (updater plugin + pubkey + endpoint) and **do not** carry signing keys, Cloudflare tokens, release workflows, or `davidtech-updater` as a dependency.
+Claude reads `CLAUDE.md`, looks up `beam-profiler` in `apps.json`, checks the last shipped version in `RELEASES.md`, asks whether to bump (and how), runs `npm run tauri build` in the app's `localPath`, fixes any build errors that come up, signs and uploads to R2, and appends a line to `RELEASES.md`. End-to-end in 5–10 minutes.
 
-One-time onboarding per app is still `npm run register -- <name>` from this repo — see [Registering a new app](#registering-a-new-app).
+That's the entire loop.
+
+The full runbook lives in [`CLAUDE.md`](./CLAUDE.md). It auto-loads when Claude Code opens this repo, so you don't have to memorize commands.
 
 ---
 
@@ -38,195 +33,134 @@ Every DavidTech app lives in one file at the repo root:
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "apps": {
     "beam-profiler": {
-      "slug": "vuc97kf7i4pq",
+      "slug": "0ex2s23yt30r",
       "framework": "tauri",
       "repo": "mark2messmore/dukane-beam-profiler",
-      "registeredAt": "2026-04-24T19:00:00Z"
+      "localPath": "C:\\Users\\mark2\\Documents\\MyRepos\\dukane-beam-profiler",
+      "registeredAt": "2026-04-24T20:19:23.816Z"
     }
   }
 }
 ```
 
-Commit it. No secrets in here — the slug is visible inside every installed app binary anyway.
+Field meanings:
+
+- **`slug`** — 12-char random, gates the R2 URL. Don't change it after the first ship; installed copies will stop seeing updates.
+- **`framework`** — `tauri` / `electron` / `rust` / `qt`. Picks the adapter.
+- **`repo`** — optional. GitHub repo for paper-trail / future archaeology. Not required for shipping.
+- **`localPath`** — **absolute path to the source on the maintainer's machine.** Required for the AI-driven release flow. Set with `--local=<path>` at register time, or via `set-path` later.
+
+Commit this file. No secrets in here — the slug is visible inside every installed app binary anyway.
 
 ---
 
 ## Prerequisites
 
-### One-time, on GitHub (enables automated releases)
-
-In `mark2messmore/davidtech-updater` → Settings → Secrets and variables → Actions, add:
-
-| Secret | Value |
-|---|---|
-| `TAURI_SIGNING_PRIVATE_KEY` | Contents of `~/.tauri/davidtech_updater.key` — paste the whole file |
-| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | The password you set when generating the key (omit if you hit Enter twice for no password) |
-| `CLOUDFLARE_API_TOKEN` | R2 write token scoped to `davidtech-app-updates` |
-| `DAVIDTECH_REPO_TOKEN` | Fine-grained PAT with `Contents: Read-only` + `Metadata: Read-only` on every DavidTech app repo. Required for accessing private target repos during tag lookup and checkout. For **public** target repos only, this secret is optional. |
-
-Without these, the scheduled release workflow will fail visibly on the first run after a tagged push — you don't have to set them to merge this repo, but nothing ships until they're set.
-
-### One-time, on the maintainer laptop (for manual publish / local admin)
+### One-time, on the maintainer's machine
 
 ```bash
-npm install           # zero runtime deps — this just populates node_modules/.bin
-wrangler login        # caches OAuth; see 'wrangler whoami' to confirm
-gh auth login         # for cross-repo tag / release lookups when running locally
+# Cloudflare R2 + Worker access
+wrangler login            # caches OAuth — confirm with 'wrangler whoami'
+
+# For Tauri apps — generate the shared signing key once, reuse forever
+npx tauri signer generate -w "$env:USERPROFILE\.tauri\davidtech_updater.key"
 ```
 
-For **Tauri apps** you also need the shared signing keypair. Generate **once, reuse across every DavidTech Tauri app, forever**:
+The pubkey from `davidtech_updater.key.pub` is what goes into every Tauri app's `tauri.conf.json`. The private key signs every `.nsis.zip` during `tauri build`. **Keep it safe** — losing it means every app using its pubkey can never ship another update.
 
-```bash
-npx tauri signer generate -w ~/.tauri/davidtech_updater.key
+Before each Tauri build, the signing key needs to be in the environment. PowerShell:
+
+```powershell
+$env:TAURI_SIGNING_PRIVATE_KEY = (Get-Content $env:USERPROFILE\.tauri\davidtech_updater.key -Raw)
+$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = ""
 ```
 
-Keep the private key safe — losing it means every app using its pubkey can never ship another update. The pubkey file (`.pub`) goes into every Tauri app's `tauri.conf.json`.
+The runbook in `CLAUDE.md` reminds Claude to set these if a build fails on missing signing key.
+
+### Node + build toolchains
+
+- Node 18+
+- For Tauri apps: cargo (rustup), MSVC build tools, npm
+- For Electron apps: Node + npm
 
 ---
 
 ## Registering a new app
 
 ```bash
-npm run register -- <name> --framework=<electron|tauri|rust|qt> --repo=<owner/name>
+node bin/davidtech-updater.js register <name> \
+  --framework=<electron|tauri|rust|qt> \
+  --repo=<owner/name> \
+  --local="<absolute-path-to-source>"
 ```
 
 Example:
+
 ```bash
-npm run register -- beam-profiler --framework=tauri --repo=mark2messmore/dukane-beam-profiler
+node bin/davidtech-updater.js register beam-profiler \
+  --framework=tauri \
+  --repo=mark2messmore/dukane-beam-profiler \
+  --local="C:\Users\mark2\Documents\MyRepos\dukane-beam-profiler"
 ```
 
 `register`:
 1. Generates a unique 12-char slug.
 2. Appends the entry to `apps.json`.
-3. Prints a framework-specific next-steps block you paste into the target app (updater plugin config, endpoint URL, etc.).
+3. Prints a framework-specific next-steps block — pubkey + endpoint URL to paste into the target app, plus the client-side wiring snippets.
 
-The `--repo` flag is optional but strongly recommended — without it, `publish` can only work with `--from=<local-path>`.
-
----
-
-## Publishing
-
-The primary path is **automatic** — bump + tag + push in the target app repo, and the scheduled workflow in this repo takes care of the rest. See "Automated release workflow" below.
-
-The CLI also supports three manual modes for debugging, emergency releases, or initial bring-up:
+If you forget `--local` at register time, fix it later:
 
 ```bash
-npm run publish -- <name> [tag] [--from=<local-path>] [--dry-run]
+node bin/davidtech-updater.js set-path beam-profiler "C:\path\to\source"
 ```
-
-1. **`--from=<path>`** — read artifacts from a locally-built project root. Useful for proving out a new app before you trust CI with it.
-2. **Explicit tag** — download that GitHub Release's assets via `gh` (requires a GH Release to exist, produced by e.g. `tauri-action`).
-3. **Omit tag** — download the latest GitHub Release's assets.
-
-`--dry-run` on any mode prints the wrangler uploads that would run (and writes the Tauri manifest to inspect) without actually uploading.
-
-## Automated release workflow
-
-`.github/workflows/release.yml` in this repo runs every 15 minutes and on manual dispatch. Its pipeline:
-
-1. **Plan** (linux): `check-releases --json` compares each app in `apps.json` against what's live on R2. Emits a matrix of apps that need publishing.
-2. **Release** (windows, per-app matrix):
-   - Clone the target repo at the tag
-   - Install deps, install Rust toolchain for Tauri apps
-   - Build with `TAURI_SIGNING_PRIVATE_KEY` from repo secrets
-   - Publish to R2 with `CLOUDFLARE_API_TOKEN` from repo secrets
-
-The plan job's outputs include the full table of apps and their status, so the Actions run logs let you see what the cron decided at a glance.
-
-**To trigger manually:** Actions tab → Release → Run workflow. Or `gh workflow run release.yml --repo mark2messmore/davidtech-updater`.
-
-**To speed up the cadence:** edit the cron in the workflow — `*/5 * * * *` gives 5-minute polling; `0 * * * *` gives hourly.
-
-**Notes:**
-- App repos must be **public** for the workflow to clone them without auth. For private repos, add a PAT secret with cross-repo read scope and pass it to the `actions/checkout@v4` step that checks out the app.
-- The matching `tauri.conf.json` version must agree with the tag — if you tag `v1.2.0` but leave the conf at 1.1.0, Tauri builds a `_1.1.0_` bundle and the publish becomes a no-op (R2 already has 1.1.0, so `check-releases` won't re-schedule it).
-- `concurrency: release` prevents two cron ticks fighting. A build in progress finishes; the next cron tick waits.
 
 ---
 
-## Framework details
+## Shipping a release (the explicit, no-AI path)
 
-### Tauri v2 — target-app wiring
+Most of the time you'll just talk to Claude. But if you want to do it by hand:
 
-1. Shared one-time setup (done once per maintainer): `tauri signer generate -w ~/.tauri/davidtech_updater.key`
-2. In the target repo:
-   ```bash
-   cargo add tauri-plugin-updater --features native-tls --manifest-path src-tauri/Cargo.toml
-   npm install @tauri-apps/plugin-updater @tauri-apps/plugin-process
-   ```
-3. Paste into `src-tauri/tauri.conf.json` (pubkey + endpoint printed by `register`):
-   ```json
-   {
-     "plugins": {
-       "updater": {
-         "active": true,
-         "dialog": false,
-         "pubkey": "<SHARED_DAVIDTECH_PUBKEY>",
-         "endpoints": ["https://updates.davidtechllc.com/<slug>/<app>/latest.json"]
-       }
-     },
-     "bundle": { "createUpdaterArtifacts": true, "targets": ["nsis"] }
-   }
-   ```
-4. Register the plugin in `src-tauri/src/lib.rs`:
-   ```rust
-   .plugin(tauri_plugin_updater::Builder::new().build())
-   ```
-5. Wire a "Check for updates" button in the UI — ~5 lines:
-   ```ts
-   import { check } from '@tauri-apps/plugin-updater';
-   import { relaunch } from '@tauri-apps/plugin-process';
+```bash
+# 1. Bump version in lockstep across the app's three sources of truth
+node bin/davidtech-updater.js bump beam-profiler patch
 
-   const update = await check();
-   if (update?.available) {
-     await update.downloadAndInstall();
-     await relaunch();
-   }
-   ```
-6. Build with the signing key in the environment:
-   ```bash
-   TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tauri/davidtech_updater.key)" npm run tauri build
-   ```
+# 2. Build the app locally (in its localPath)
+cd <localPath>
+npm install
+npm run tauri build
 
-Release notes: if `RELEASE_NOTES.md` / `.txt` / `NOTES.md` exists at the project root, its contents become the manifest's `notes` field for local publishes. For GitHub-sourced publishes, the release body is used.
+# 3. Publish to R2
+cd <davidtech-updater repo>
+node bin/davidtech-updater.js publish beam-profiler --from=<localPath>
 
-### Electron — target-app wiring
+# 4. Verify
+curl https://updates.davidtechllc.com/<slug>/beam-profiler/latest.json
 
-1. Install `electron-updater` (target app's `package.json`).
-2. Configure electron-builder publish (endpoint printed by `register`):
-   ```json
-   "build": {
-     "publish": [{ "provider": "generic", "url": "https://updates.davidtechllc.com/<slug>/<app>", "channel": "latest" }],
-     "nsis": { "oneClick": true, "perMachine": true }
-   }
-   ```
-3. Wire `autoUpdater.checkForUpdates()` in `main.js`. See §§8–10 of `AUTO_UPDATE_SETUP.md` in the `dukane-cam-viewer` repo for the full UI recipe (predates this CLI but the client-side code is unchanged).
+# 5. Append to RELEASES.md by hand
+```
 
-### Rust and Qt
-
-Adapter stubs live at `src/adapters/{rust,qt}.js`. See §§23–24 of `AUTO_UPDATE_SETUP.md` in `dukane-cam-viewer` for the patterns to port. PRs welcome.
+The AI flow does all five of these for you and asks for confirmation at the bumps and the fix-retries.
 
 ---
 
 ## CLI reference
 
 ```
-npm run register  -- <name> --framework=<fw> [--repo=<owner/name>]
-npm run publish   -- <name> [tag] [--from=<path>] [--dry-run]
-npm run apps                       # list registered apps
-npm run slug                       # generate a slug (register does this automatically)
-node bin/davidtech-updater.js check-releases [--json]
-                                   # compare each app's latest tag vs R2; list
-                                   # who needs publishing (--json for CI matrix)
+node bin/davidtech-updater.js apps                                List registered apps + their localPaths
+node bin/davidtech-updater.js register <name> --framework=<fw> [--repo=<owner/name>] [--local=<path>]
+node bin/davidtech-updater.js set-path  <name> <absolute-path>    Set/update localPath
+node bin/davidtech-updater.js bump      <name> <patch|minor|major|x.y.z>
+                                                                  Bump version in package.json + Cargo.toml + tauri.conf.json
+                                                                  in lockstep, refresh both lockfiles
+node bin/davidtech-updater.js publish   <name> --from=<path> [--dry-run]
+                                                                  Sign+upload artifacts at <path> to R2
+node bin/davidtech-updater.js slug                                Generate a 12-char slug (register does this automatically)
 ```
 
-You can also invoke the bin directly: `node bin/davidtech-updater.js <command> <args>` — no `--` needed.
-
-### `--dry-run`
-Prints every `wrangler r2 object put` command that would execute, without running them. For Tauri, also shows the generated `latest.json`. Use before every real publish until you trust the setup.
+`--dry-run` on `publish` prints every `wrangler r2 object put` that would execute (and writes the Tauri manifest to inspect) without uploading.
 
 ---
 
@@ -234,16 +168,22 @@ Prints every `wrangler r2 object put` command that would execute, without runnin
 
 ```
 davidtech-updater/
-├── apps.json                     The registry — every DavidTech app
+├── CLAUDE.md                     The natural-language release runbook (read this first)
+├── apps.json                     Registry of every DavidTech app + their localPaths
+├── RELEASES.md                   Append-only ship log — last shipped version per app
+├── STATUS.md                     This week's project state
+├── README.md                     This file
 ├── src/
 │   ├── index.js                  Command router
-│   ├── registry.js               apps.json load/save/validate
+│   ├── registry.js               apps.json load/save/validate + findApp() fuzzy matcher
 │   ├── config.js                 Shared constants + validators
 │   ├── upload.js                 wrangler r2 put wrapper
-│   ├── fetch.js                  Download GitHub release assets via gh
+│   ├── fetch.js                  GitHub release-asset downloader (used by --from-less publish)
 │   ├── commands/
 │   │   ├── slug.js
 │   │   ├── register.js
+│   │   ├── set-path.js
+│   │   ├── bump.js
 │   │   └── publish.js
 │   └── adapters/
 │       ├── electron.js           IMPLEMENTED
@@ -254,11 +194,70 @@ davidtech-updater/
 │   ├── wrangler.toml
 │   └── src/index.js
 ├── bin/davidtech-updater.js
-├── .github/workflows/ci.yml
 ├── LICENSE
-├── package.json
-└── README.md
+└── package.json
 ```
+
+---
+
+## Framework details
+
+### Tauri v2 — target-app wiring
+
+When `register` runs for a Tauri app, it prints exactly what to paste. Here's the summary:
+
+1. In the target repo:
+   ```bash
+   cargo add tauri-plugin-updater --features native-tls --manifest-path src-tauri/Cargo.toml
+   npm install @tauri-apps/plugin-updater @tauri-apps/plugin-process
+   ```
+2. Paste into `src-tauri/tauri.conf.json`:
+   ```json
+   {
+     "plugins": {
+       "updater": {
+         "active": true,
+         "pubkey": "<SHARED_DAVIDTECH_PUBKEY>",
+         "endpoints": ["https://updates.davidtechllc.com/<slug>/<app>/latest.json"]
+       }
+     },
+     "bundle": { "createUpdaterArtifacts": true }
+   }
+   ```
+3. Add to `src-tauri/capabilities/default.json` permissions: `"updater:default"`, `"process:allow-restart"`, `"dialog:allow-message"`.
+4. Register the plugin in `src-tauri/src/lib.rs`:
+   ```rust
+   .plugin(tauri_plugin_updater::Builder::new().build())
+   ```
+5. Wire a "Check for updates" button (~5 lines):
+   ```ts
+   import { check } from '@tauri-apps/plugin-updater';
+   import { relaunch } from '@tauri-apps/plugin-process';
+
+   const update = await check();
+   if (update?.available) {
+     await update.downloadAndInstall();
+     await relaunch();
+   }
+   ```
+
+Release notes: if `RELEASE_NOTES.md` / `.txt` / `NOTES.md` exists at the project root, its contents become the manifest's `notes` field.
+
+### Electron — target-app wiring
+
+1. Install `electron-updater` in the target app.
+2. Configure electron-builder publish:
+   ```json
+   "build": {
+     "publish": [{ "provider": "generic", "url": "https://updates.davidtechllc.com/<slug>/<app>", "channel": "latest" }],
+     "nsis": { "oneClick": true, "perMachine": true }
+   }
+   ```
+3. Wire `autoUpdater.checkForUpdates()` in `main.js`.
+
+### Rust and Qt
+
+Adapter stubs at `src/adapters/{rust,qt}.js`. Build out when there's a real app that needs them.
 
 ---
 
@@ -271,11 +270,12 @@ cd worker
 wrangler deploy
 ```
 
-Invariants the Worker enforces:
+Invariants:
 - Path must be exactly `/<slug>/<app>/<file>`. Anything else → 404.
 - `slug` regex: `^[a-z0-9]{8,32}$` (kept in sync with `src/config.js`).
 - `app` regex: `^[a-z0-9-]{1,40}$`.
-- Extension allowlist covers every framework this CLI supports.
+- Missing `latest.json` → 204 No Content (Tauri's "client up to date" response).
+- Missing `latest.yml` → 404 (electron-updater's expected "no update" response).
 - GET / HEAD only. `range:` header honored.
 - Manifests + signatures cached 30s; binaries cached 1h.
 
@@ -283,24 +283,20 @@ Invariants the Worker enforces:
 
 ## Troubleshooting
 
-**"App 'x' not in registry"** — You haven't run `npm run register -- x ...` yet, or you registered it under a different name. Check `npm run apps`.
+**Build fails with "Found version mismatched Tauri packages"** — Cargo.lock pinned the Rust crate at an older minor than what npm resolved. Run `cargo update -p tauri-plugin-<name>` in the app's `src-tauri/` and retry.
 
-**Tauri publish: "No .nsis.zip.sig in ..."** — The build didn't see `TAURI_SIGNING_PRIVATE_KEY`. Local: `export TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tauri/davidtech_updater.key)"` before running `tauri build`. CI: set it as a repo secret and inject in the build step.
+**Build fails with "no signing private key"** — Set `TAURI_SIGNING_PRIVATE_KEY` (and `_PASSWORD` if applicable) in the shell before `npm run tauri build`. See Prerequisites above.
 
-**Tauri publish: "No .nsis.zip in ..."** — `tauri.conf.json` missing `"bundle": { "createUpdaterArtifacts": true, "targets": ["nsis"] }`.
+**`publish` fails with "No .nsis.zip in ..."** — `tauri.conf.json` is missing `"bundle": { "createUpdaterArtifacts": true }`.
 
-**Electron publish: "latest.yml missing"** — electron-builder ran the portable target, not NSIS. Confirm the `publish` block is configured and the NSIS target is the one running.
-
-**`gh release view` fails** — `gh auth status` to check auth, make sure the token has access to the repo, confirm the tag actually exists on GitHub.
-
-**Wrangler upload fails with auth error** — `wrangler whoami`. If you recently rotated credentials, `wrangler login` again.
+**Wrangler upload fails with auth error** — `wrangler whoami` to check, `wrangler login` if needed.
 
 **Installed app never sees the update** — Verify the manifest is live:
 ```bash
 curl https://updates.davidtechllc.com/<slug>/<app>/latest.json   # Tauri
 curl https://updates.davidtechllc.com/<slug>/<app>/latest.yml    # Electron
 ```
-If it 404s, the publish didn't upload. If it succeeds, check the app's client-side update check is wired correctly.
+If it 404s, the publish didn't upload. If the version looks right, the client-side update check in the app may not be wired correctly.
 
 ---
 
@@ -308,8 +304,6 @@ If it 404s, the publish didn't upload. If it succeeds, check the app's client-si
 
 For apps currently running their own `scripts/publish.js` against `updates.davidtechllc.com`:
 
-1. In `davidtech-updater`: `npm run register -- cam-viewer --framework=electron --repo=mark2messmore/dukane-cam-viewer` — **but** edit the generated slug in `apps.json` to match the app's existing slug (grep the old `publish.js` for the `SLUG` constant). The R2 path must not change or installed copies stop seeing updates.
+1. In this repo: register the app — but **edit the generated slug in `apps.json` to match the app's existing slug** (grep the old `publish.js` for the `SLUG` constant). The R2 path must not change or installed copies stop seeing updates.
 2. In the target repo: delete `scripts/publish.js` and remove its npm script.
-3. Release via `npm run publish -- cam-viewer --from=<path>` (or GitHub Release tag once the app starts attaching assets).
-
-The Worker serves the same URLs it always has — nothing on the deployed side changes.
+3. Release via the AI flow: "hey I updated cam viewer" — Claude takes it from there.
